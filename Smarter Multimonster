@@ -1,0 +1,676 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Player = Players.LocalPlayer
+local TargetAttribute = "MultimonsterTargetNodePosition"
+local SourceURL = "https://raw.githubusercontent.com/RegularVynixu/DOORS-Entity-Spawner/main/init.luau"
+
+local Source = game:HttpGet(SourceURL)
+
+local PatchedSource, PatchCount = Source:gsub(
+    "EntityMoveTo%(model, cframe, config%.Movement%.Speed%)",
+    'model:SetAttribute("' .. TargetAttribute .. '", cframe.Position)\n                EntityMoveTo(model, cframe, config.Movement.Speed)'
+)
+
+if PatchCount == 0 then
+    error("Multimonster: could not patch V2 movement destinations.")
+end
+
+getgenv().VynixuEntitySpawnerV2 = nil
+
+local Spawner = loadstring(PatchedSource)()
+
+local Entity = Spawner:Create({
+    Entity = {
+        Name = "Multimonster",
+        Asset = "rbxassetid://12263106166",
+        HeightOffset = 0
+    },
+
+    Movement = {
+        Speed = 310,
+        Delay = 0,
+        Reversed = false
+    },
+
+    Rebounding = {
+        Enabled = true,
+        Type = "Ambush",
+        Min = 3,
+        Max = 5,
+        Delay = 2
+    },
+
+    Damage = {
+        Enabled = false,
+        Range = 40,
+        Amount = 125,
+        IgnoreHiding = false
+    },
+
+    Lights = {
+        Flicker = {
+            Enabled = true,
+            Duration = 1
+        },
+        Shatter = true,
+        Repair = false
+    },
+
+    Earthquake = {
+        Enabled = true
+    },
+
+    CameraShake = {
+        Enabled = true,
+        Values = {4.5, 70, 0.5, 2},
+        Range = 225
+    },
+
+    Crucifixion = {
+        Type = "Guiding",
+        Enabled = true,
+        Range = 10,
+        Resist = false,
+        Break = true
+    },
+
+    Death = {
+        Type = "Guiding",
+        Hints = {
+            "You died to The Multimonster",
+            "You can tell it's presence by a red flash",
+            "When it's attacking, hide and do not use safespots as it checks them"
+"You've done great! Don't give up!"
+        },
+        Cause = "Multimonster"
+    }
+})
+
+if not Entity then
+    error("Multimonster: entity creation failed. Check the asset and its model.")
+end
+
+local Model = Entity.Model
+local Active = false
+local LungeActive = false
+local LungeCooldown = false
+local LungeToken = 0
+local LastCheck = 0
+local MoveConnection
+local TouchConnections = {}
+local ActiveTweens = {}
+local LungeValue
+local LungeConnection
+local FlashEffect
+local FlashToken = 0
+local TouchDeathTriggered = false
+
+local function getCharacter()
+    return Player.Character
+end
+
+local function getHumanoid()
+    local Character = getCharacter()
+    return Character and Character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRoot()
+    local Character = getCharacter()
+
+    if not Character then
+        return nil
+    end
+
+    return Character:FindFirstChild("HumanoidRootPart")
+        or Character.PrimaryPart
+end
+
+local function isAlive()
+    local Humanoid = getHumanoid()
+    return Humanoid ~= nil and Humanoid.Health > 0
+end
+
+local function isHiding()
+    local Character = getCharacter()
+    return Character ~= nil and Character:GetAttribute("Hiding") == true
+end
+
+local function isHoldingCrucifix()
+    local Character = getCharacter()
+
+    if not Character then
+        return false
+    end
+
+    for _, Item in ipairs(Character:GetChildren()) do
+        if Item:IsA("Tool")
+            and string.find(Item.Name:lower(), "crucifix", 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function isBeingCrucified()
+    if not Model or not Model.Parent then
+        return false
+    end
+
+    return Model:GetAttribute("BeingBanished") == true
+end
+
+local function canTouchKill()
+    return isAlive()
+        and not isHiding()
+        and not isHoldingCrucifix()
+        and not isBeingCrucified()
+        and not TouchDeathTriggered
+end
+
+local function getAllNodes()
+    local Nodes = {}
+    local Rooms = Workspace:FindFirstChild("CurrentRooms")
+
+    if not Rooms then
+        return Nodes
+    end
+
+    for _, Room in ipairs(Rooms:GetChildren()) do
+        local Folder = Room:FindFirstChild("PathfindNodes")
+
+        if Folder then
+            for _, Node in ipairs(Folder:GetChildren()) do
+                if Node:IsA("BasePart") then
+                    table.insert(Nodes, Node)
+                end
+            end
+        end
+
+        for _, Name in ipairs({"RoomEntrance", "RoomExit"}) do
+            local Node = Room:FindFirstChild(Name)
+
+            if Node and Node:IsA("BasePart") then
+                table.insert(Nodes, Node)
+            end
+        end
+    end
+
+    return Nodes
+end
+
+local function getNearestNode(Position)
+    local Nearest
+    local NearestDistance = math.huge
+
+    for _, Node in ipairs(getAllNodes()) do
+        local Distance = (Node.Position - Position).Magnitude
+
+        if Distance < NearestDistance then
+            NearestDistance = Distance
+            Nearest = Node
+        end
+    end
+
+    return Nearest
+end
+
+local function hasLineOfSight()
+    if not Model or not Model.Parent or not isAlive() or isHiding() then
+        return false
+    end
+
+    local Root = getRoot()
+
+    if not Root then
+        return false
+    end
+
+    local Origin = Model:GetPivot().Position
+    local Direction = Root.Position - Origin
+
+    if Direction.Magnitude <= 0.01 then
+        return true
+    end
+
+    local Params = RaycastParams.new()
+    Params.FilterType = Enum.RaycastFilterType.Exclude
+    Params.FilterDescendantsInstances = {Model}
+
+    local Result = Workspace:Raycast(Origin, Direction, Params)
+    local Character = getCharacter()
+
+    return Result == nil
+        or (
+            Character ~= nil
+            and Result.Instance:IsDescendantOf(Character)
+        )
+end
+
+local function movingTowardNearestNode()
+    if not Model or not Model.Parent or not isAlive() or isHiding() then
+        return false
+    end
+
+    local Root = getRoot()
+
+    if not Root then
+        return false
+    end
+
+    local TargetPosition = Model:GetAttribute(TargetAttribute)
+
+    if typeof(TargetPosition) ~= "Vector3" then
+        return false
+    end
+
+    local NearestNode = getNearestNode(Root.Position)
+
+    if not NearestNode then
+        return false
+    end
+
+    return (TargetPosition - NearestNode.Position).Magnitude <= 6
+end
+
+local function redFlash()
+    FlashToken += 1
+    local MyToken = FlashToken
+
+    if FlashEffect then
+        FlashEffect:Destroy()
+        FlashEffect = nil
+    end
+
+    local Effect = Instance.new("ColorCorrectionEffect")
+    Effect.Name = "MultimonsterRedFlash"
+    Effect.TintColor = Color3.fromRGB(255, 25, 25)
+    Effect.Brightness = 0.15
+    Effect.Contrast = 0.2
+    Effect.Parent = Lighting
+
+    FlashEffect = Effect
+
+    task.delay(0.18, function()
+        if MyToken ~= FlashToken or not Effect.Parent then
+            return
+        end
+
+        local Fade = TweenService:Create(
+            Effect,
+            TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {
+                TintColor = Color3.new(1, 1, 1),
+                Brightness = 0,
+                Contrast = 0
+            }
+        )
+
+        Fade:Play()
+        Fade.Completed:Wait()
+
+        if MyToken == FlashToken and Effect.Parent then
+            Effect:Destroy()
+            FlashEffect = nil
+        end
+    end)
+end
+
+local function stopLunge(restoreStart, startCFrame)
+    LungeToken += 1
+
+    for _, Tween in ipairs(ActiveTweens) do
+        pcall(function()
+            Tween:Cancel()
+        end)
+    end
+
+    table.clear(ActiveTweens)
+
+    if LungeConnection then
+        LungeConnection:Disconnect()
+        LungeConnection = nil
+    end
+
+    if LungeValue then
+        if restoreStart and Model and Model.Parent and startCFrame then
+            Model:PivotTo(startCFrame)
+        end
+
+        LungeValue:Destroy()
+        LungeValue = nil
+    end
+
+    LungeActive = false
+end
+
+local function startLunge()
+    if LungeActive or LungeCooldown or not isAlive() or isHiding() then
+        return
+    end
+
+    if not Model or not Model.Parent or isBeingCrucified() then
+        return
+    end
+
+    local Root = getRoot()
+
+    if not Root then
+        return
+    end
+
+    LungeActive = true
+    LungeCooldown = true
+    LungeToken += 1
+
+    local MyToken = LungeToken
+    local StartCFrame = Model:GetPivot()
+    local TargetCFrame = Root.CFrame
+
+    LungeValue = Instance.new("CFrameValue")
+    LungeValue.Value = StartCFrame
+
+    redFlash()
+
+    LungeConnection = LungeValue:GetPropertyChangedSignal("Value"):Connect(function()
+        if MyToken ~= LungeToken or not Model or not Model.Parent then
+            return
+        end
+
+        if not isAlive() or isHiding() or isBeingCrucified() then
+            stopLunge(true, StartCFrame)
+            return
+        end
+
+        Model:PivotTo(LungeValue.Value)
+    end)
+
+    local Inbound = TweenService:Create(
+        LungeValue,
+        TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+        {Value = TargetCFrame}
+    )
+
+    table.insert(ActiveTweens, Inbound)
+    Inbound:Play()
+
+    task.spawn(function()
+        local State = Inbound.Completed:Wait()
+
+        if MyToken ~= LungeToken then
+            return
+        end
+
+        if State ~= Enum.PlaybackState.Completed
+            or not isAlive()
+            or isHiding()
+            or isBeingCrucified() then
+            stopLunge(true, StartCFrame)
+            return
+        end
+
+        local Outbound = TweenService:Create(
+            LungeValue,
+            TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Value = StartCFrame}
+        )
+
+        table.insert(ActiveTweens, Outbound)
+        Outbound:Play()
+        Outbound.Completed:Wait()
+
+        if MyToken == LungeToken then
+            stopLunge(false, StartCFrame)
+        end
+    end)
+
+    task.delay(1.2, function()
+        LungeCooldown = false
+    end)
+end
+
+local function showTouchDeathHints()
+    local PlayerGui = Player:FindFirstChildOfClass("PlayerGui")
+    local MainUI = PlayerGui and PlayerGui:FindFirstChild("MainUI")
+    local DeathUI = MainUI and MainUI:FindFirstChild("Death")
+
+    if not DeathUI then
+        return
+    end
+
+    task.spawn(function()
+        local Deadline = os.clock() + 8
+
+        while os.clock() < Deadline do
+            if DeathUI.Visible then
+                break
+            end
+
+            task.wait(0.05)
+        end
+
+        if not DeathUI.Visible then
+            return
+        end
+
+        local Remotes = ReplicatedStorage:FindFirstChild("RemotesFolder")
+        local DeathHint = Remotes and Remotes:FindFirstChild("DeathHint")
+
+        if DeathHint and firesignal then
+            pcall(function()
+                firesignal(
+                    DeathHint.OnClientEvent,
+                    Entity.Config.Death.Hints,
+                    "Blue"
+                )
+            end)
+        end
+
+        local GameStats = ReplicatedStorage:FindFirstChild("GameStats")
+        local PlayerStats = GameStats and GameStats:FindFirstChild("Player_" .. Player.Name)
+        local Total = PlayerStats and PlayerStats:FindFirstChild("Total")
+        local DeathCause = Total and Total:FindFirstChild("DeathCause")
+
+        if DeathCause and DeathCause:IsA("StringValue") then
+            DeathCause.Value = Entity.Config.Death.Cause
+        end
+    end)
+end
+
+local function killPlayer()
+    if not canTouchKill() then
+        return
+    end
+
+    local Humanoid = getHumanoid()
+
+    if not Humanoid then
+        return
+    end
+
+    if isBeingCrucified() then
+        return
+    end
+
+    TouchDeathTriggered = true
+
+    local GameStats = ReplicatedStorage:FindFirstChild("GameStats")
+    local PlayerStats = GameStats and GameStats:FindFirstChild("Player_" .. Player.Name)
+    local Total = PlayerStats and PlayerStats:FindFirstChild("Total")
+    local DeathCause = Total and Total:FindFirstChild("DeathCause")
+
+    if DeathCause and DeathCause:IsA("StringValue") then
+        DeathCause.Value = Entity.Config.Death.Cause
+    end
+
+    Humanoid.Health = 0
+    showTouchDeathHints()
+end
+
+local function checkTouch()
+    if not canTouchKill() then
+        return
+    end
+
+    local Character = getCharacter()
+
+    if not Character then
+        return
+    end
+
+    local BoxCFrame, BoxSize = Model:GetBoundingBox()
+    local Params = OverlapParams.new()
+    Params.FilterType = Enum.RaycastFilterType.Include
+    Params.FilterDescendantsInstances = {Character}
+
+    for _, Part in ipairs(Workspace:GetPartBoundsInBox(BoxCFrame, BoxSize, Params)) do
+        if Part:IsDescendantOf(Character) then
+            killPlayer()
+            return
+        end
+    end
+end
+
+local function checkLunge()
+    if not isAlive() or isHiding() or isBeingCrucified() then
+        if LungeActive then
+            stopLunge(false)
+        end
+
+        return
+    end
+
+    if hasLineOfSight() or movingTowardNearestNode() then
+        startLunge()
+    end
+end
+
+local function disconnectTouches()
+    for _, Connection in ipairs(TouchConnections) do
+        Connection:Disconnect()
+    end
+
+    table.clear(TouchConnections)
+end
+
+local function connectTouchPart(Part)
+    if not Part:IsA("BasePart") then
+        return
+    end
+
+    table.insert(TouchConnections, Part.Touched:Connect(function(Hit)
+        if not canTouchKill() then
+            return
+        end
+
+        local Character = getCharacter()
+
+        if Character and Hit:IsDescendantOf(Character) then
+            killPlayer()
+        end
+    end))
+end
+
+local function cleanup()
+    Active = false
+
+    if MoveConnection then
+        MoveConnection:Disconnect()
+        MoveConnection = nil
+    end
+
+    disconnectTouches()
+    stopLunge(false)
+
+    FlashToken += 1
+
+    if FlashEffect then
+        FlashEffect:Destroy()
+        FlashEffect = nil
+    end
+end
+
+Entity:SetCallback("OnSpawned", function()
+    Model = Entity.Model
+    TouchDeathTriggered = false
+
+    if not Model or not Model:IsA("Model") then
+        warn("Multimonster: spawned model is unavailable.")
+        return
+    end
+
+    Active = true
+    LastCheck = 0
+
+    for _, Instance in ipairs(Model:GetDescendants()) do
+        connectTouchPart(Instance)
+    end
+
+    table.insert(
+        TouchConnections,
+        Model.DescendantAdded:Connect(connectTouchPart)
+    )
+
+    MoveConnection = RunService.Heartbeat:Connect(function()
+        if not Active or not Model or not Model.Parent then
+            return
+        end
+
+        local Now = os.clock()
+
+        if Now - LastCheck < 0.1 then
+            return
+        end
+
+        LastCheck = Now
+        checkLunge()
+        checkTouch()
+    end)
+end)
+
+Entity:SetCallback("OnStartMoving", function()
+end)
+
+Entity:SetCallback("OnReachedNode", function()
+end)
+
+Entity:SetCallback("OnEnterRoom", function()
+end)
+
+Entity:SetCallback("OnLookAt", function()
+end)
+
+Entity:SetCallback("OnRebounding", function()
+end)
+
+Entity:SetCallback("OnDamagePlayer", function()
+end)
+
+Entity:SetCallback("OnDespawning", function()
+    cleanup()
+end)
+
+Entity:SetCallback("OnDespawned", function()
+    cleanup()
+
+    task.spawn(function()
+        pcall(function()
+            loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/Anctarus7105/Custom-Badges/refs/heads/main/Hardcore%20Mode/A-60Hardcore.lua"
+            ))()
+        end)
+
+        pcall(function()
+            loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/Anctarus7105/Entities-DeSpawns/refs/heads/main/A-60HardcoreDeSpawner.lua"
+            ))()
+        end)
+    end)
+end)
+
+Entity:Run()
