@@ -1,3 +1,4 @@
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
@@ -40,8 +41,8 @@ local Entity = Spawner:Create({
     Rebounding = {
         Enabled = true,
         Type = "Ambush",
-        Min = 3,
-        Max = 5,
+        Min = 5,
+        Max = 10,
         Delay = 2
     },
 
@@ -55,7 +56,7 @@ local Entity = Spawner:Create({
     Lights = {
         Flicker = {
             Enabled = true,
-            Duration = 1
+            Duration = 0
         },
         Shatter = true,
         Repair = false
@@ -85,7 +86,6 @@ local Entity = Spawner:Create({
             "You died to The Multimonster",
             "You can tell it's presence by a red flash",
             "When it's attacking, hide and do not use safespots as it checks them"
-"You've done great! Don't give up!"
         },
         Cause = "Multimonster"
     }
