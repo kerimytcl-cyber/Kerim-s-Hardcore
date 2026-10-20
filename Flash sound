@@ -1,0 +1,41 @@
+
+local url = "https://sourcemirrors.org/hosted/8473-inshot_20261020_133800208.mp3"
+local filename = "DeltaMusic.mp3"
+
+local env = getfenv()
+local download = env.writefile
+local loadAsset = env.getcustomasset or env.getsynasset
+
+if type(download) ~= "function" then
+    warn("Delta does not expose writefile")
+    return
+end
+
+if type(loadAsset) ~= "function" then
+    warn("Delta does not expose getcustomasset or getsynasset")
+    return
+end
+
+local ok, result = pcall(function()
+    local data = game:HttpGet(url)
+
+    if #data == 0 then
+        error("Downloaded file is empty")
+    end
+
+    download(filename, data)
+
+    local sound = Instance.new("Sound")
+    sound.SoundId = loadAsset(filename)
+    sound.Volume = 1
+    sound.Parent = game:GetService("SoundService")
+    sound:Play()
+
+    return sound
+end)
+
+if not ok then
+    warn("Playback failed: " .. tostring(result))
+else
+    print("Audio playback requested")
+end
