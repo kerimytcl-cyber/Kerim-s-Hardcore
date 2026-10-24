@@ -1,0 +1,317 @@
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Player = Players.LocalPlayer
+local LatestRoom = ReplicatedStorage:WaitForChild("GameData"):WaitForChild("LatestRoom")
+
+local ModelID = "rbxassetid://12797521669"
+local SpawnSoundID = "rbxassetid://137044859218769"
+local DespawnSoundID = "rbxassetid://111715441853991"
+local ReplacementAmbienceID = "rbxassetid://8202539690"
+
+local DamageAmount = 1
+local DamageInterval = 0.25
+
+local Spawned = false
+local Despawned = false
+local DamageActive = false
+local DespawnReason = nil
+local Entity = nil
+local ColorEffect = nil
+
+local function FindDescendant(parent, name)
+    if not parent then
+        return nil
+    end
+
+    return parent:FindFirstChild(name, true)
+end
+
+local function StopDamage()
+    DamageActive = false
+end
+
+local function HasEquippedProtection(character)
+    return character:FindFirstChild("Lighter")
+        or character:FindFirstChild("Lantern")
+        or character:FindFirstChild("Candle")
+end
+
+local function IsCrucifixEquipped(character)
+    return character and character:FindFirstChild("Crucifix") ~= nil
+end
+
+local function PlaySound(parent, soundId, volume)
+    local sound = Instance.new("Sound")
+    sound.SoundId = soundId
+    sound.Volume = volume
+    sound.Parent = parent
+    sound:Play()
+    return sound
+end
+
+local function DisableParticles(entity)
+    for _, name in ipairs({
+        "face",
+        "Heylois",
+        "BlackTrai2l",
+        "BlackTrai3l"
+    }) do
+        local emitter = FindDescendant(entity, name)
+
+        if emitter and emitter:IsA("ParticleEmitter") then
+            emitter.Enabled = false
+        end
+    end
+end
+
+local function EnableParticles(entity)
+    for _, name in ipairs({
+        "face",
+        "Heylois",
+        "BlackTrai2l",
+        "BlackTrai3l"
+    }) do
+        local emitter = FindDescendant(entity, name)
+
+        if emitter and emitter:IsA("ParticleEmitter") then
+            emitter.Enabled = true
+        end
+    end
+end
+
+local function Despawn(reason)
+    if Despawned then
+        return
+    end
+
+    Despawned = true
+    DespawnReason = reason
+    StopDamage()
+
+    if not Entity or not Entity.Parent then
+        return
+    end
+
+    DisableParticles(Entity)
+
+    local root = FindDescendant(Entity, "FrostyNew")
+    local ambience = root and FindDescendant(root, "Ambience")
+    local ambienceFar = root and FindDescendant(root, "AmbienceFar")
+
+    if ambience and ambience:IsA("Sound") then
+        ambience:Stop()
+    end
+
+    if ambienceFar and ambienceFar:IsA("Sound") then
+        ambienceFar:Stop()
+    end
+
+    if reason == "Crucifix" then
+        local repent = root and FindDescendant(root, "Repent")
+
+        if repent and repent:IsA("Sound") then
+            repent.Volume = 2.5
+            repent:Play()
+        end
+    else
+        PlaySound(Workspace, DespawnSoundID, 1)
+    end
+
+    task.wait(5)
+
+    if Entity and Entity.Parent then
+        Entity:Destroy()
+    end
+
+    if ColorEffect and ColorEffect.Parent then
+        local tween = TweenService:Create(
+            ColorEffect,
+            TweenInfo.new(5),
+            {
+                TintColor = Color3.new(1, 1, 1),
+                Saturation = 0,
+                Contrast = 0
+            }
+        )
+
+        tween:Play()
+        tween.Completed:Wait()
+        ColorEffect:Destroy()
+    end
+end
+
+local function SpawnFrostbite()
+    if Spawned then
+        return
+    end
+
+    Spawned = true
+
+    local roomNumber = LatestRoom.Value
+    local room = Workspace:FindFirstChild("CurrentRooms")
+        and Workspace.CurrentRooms:FindFirstChild(tostring(roomNumber))
+
+    if not room then
+        return
+    end
+
+    local entrance = room:FindFirstChild("RoomEntrance")
+
+    if not entrance or not entrance:IsA("BasePart") then
+        return
+    end
+
+    local success, objects = pcall(function()
+        return game:GetObjects(ModelID)
+    end)
+
+    if not success or not objects or not objects[1] then
+        warn("Frostbite model failed to load.")
+        return
+    end
+
+    Entity = objects[1]
+
+    for _, descendant in ipairs(Entity:GetDescendants()) do
+        if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+            descendant:Destroy()
+        end
+    end
+
+    Entity.Parent = Workspace
+
+    local root = FindDescendant(Entity, "FrostyNew")
+
+    if not root or not root:IsA("BasePart") then
+        warn("Frostbite model is missing FrostyNew.")
+        Entity:Destroy()
+        Entity = nil
+        return
+    end
+
+    local currentPivot = Entity:GetPivot()
+    local rootOffset = currentPivot:ToObjectSpace(root.CFrame)
+    local targetCFrame = entrance.CFrame * CFrame.new(0, 5, -15)
+
+    Entity:PivotTo(targetCFrame * rootOffset:Inverse())
+
+    PlaySound(Workspace, SpawnSoundID, 5)
+
+    local pointLight = FindDescendant(root, "PointLight")
+
+    if pointLight and pointLight:IsA("PointLight") then
+        pointLight.Range = 60
+        pointLight.Brightness = 99999
+
+        TweenService:Create(
+            pointLight,
+            TweenInfo.new(3),
+            {Brightness = 0}
+        ):Play()
+    end
+
+    ColorEffect = Instance.new("ColorCorrectionEffect")
+    ColorEffect.Name = "FrostbiteColorEffect"
+    ColorEffect.TintColor = Color3.new(1, 1, 1)
+    ColorEffect.Parent = Lighting
+
+    TweenService:Create(
+        ColorEffect,
+        TweenInfo.new(10),
+        {
+            TintColor = Color3.fromRGB(0, 0, 255),
+            Saturation = -0.7,
+            Contrast = 0.2
+        }
+    ):Play()
+
+    for _, name in ipairs({
+        "face",
+        "Heylois",
+        "BlackTrai2l",
+        "BlackTrai3l"
+    }) do
+        local emitter = FindDescendant(Entity, name)
+
+        if emitter and emitter:IsA("ParticleEmitter") then
+            emitter.Enabled = false
+        end
+    end
+
+    task.wait(8)
+
+    if Despawned or not Entity or not Entity.Parent then
+        return
+    end
+
+    EnableParticles(Entity)
+
+    local ambience = FindDescendant(root, "Ambience")
+    local ambienceFar = FindDescendant(root, "AmbienceFar")
+
+    if ambience and ambience:IsA("Sound") then
+        ambience.SoundId = ReplacementAmbienceID
+        ambience.Looped = true
+        ambience:Play()
+    end
+
+    if ambienceFar and ambienceFar:IsA("Sound") then
+        ambienceFar:Play()
+    end
+
+    DamageActive = true
+
+    task.spawn(function()
+        while DamageActive do
+            task.wait(DamageInterval)
+
+            if not DamageActive then
+                break
+            end
+
+            local character = Player.Character
+
+            if character and IsCrucifixEquipped(character) then
+                Despawn("Crucifix")
+                break
+            end
+
+            local humanoid = character
+                and character:FindFirstChildOfClass("Humanoid")
+
+            if humanoid and humanoid.Health > 0 then
+                if not HasEquippedProtection(character) then
+                    humanoid:TakeDamage(DamageAmount)
+
+                    local stats = ReplicatedStorage:FindFirstChild("GameStats")
+                    local playerStats = stats
+                        and stats:FindFirstChild("Player_" .. Player.Name)
+                    local total = playerStats
+                        and playerStats:FindFirstChild("Total")
+                    local deathCause = total
+                        and total:FindFirstChild("DeathCause")
+
+                    if deathCause then
+                        deathCause.Value = "Frostbite"
+                    end
+                end
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    LatestRoom.Changed:Wait()
+    SpawnFrostbite()
+end)
+
+LatestRoom.Changed:Connect(function()
+    if Spawned and DamageActive and not Despawned then
+        Despawn("Door")
+    end
+end)
