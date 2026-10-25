@@ -41,8 +41,8 @@ local Entity = Spawner:Create({
     Rebounding = {
         Enabled = true,
         Type = "Ambush",
-        Min = 5,
-        Max = 10,
+        Min = 3,
+        Max = 5,
         Delay = 2
     },
 
@@ -661,14 +661,21 @@ Entity:SetCallback("OnDespawned", function()
     task.spawn(function()
         pcall(function()
             loadstring(game:HttpGet(
-                "https://raw.githubusercontent.com/Anctarus7105/Custom-Badges/refs/heads/main/Hardcore%20Mode/A-60Hardcore.lua"
+                "https://raw.githubusercontent.com/Anctarus7105/Entities-DeSpawns/refs/heads/main/A-60HardcoreDeSpawner.lua"
             ))()
         end)
 
         pcall(function()
-            loadstring(game:HttpGet(
-                "https://raw.githubusercontent.com/Anctarus7105/Entities-DeSpawns/refs/heads/main/A-60HardcoreDeSpawner.lua"
+            local achievementGiver = loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/RegularVynixu/Utilities/main/Doors/Custom%20Achievements/Source.lua"
             ))()
+
+            achievementGiver({
+                Title = "A Nostalgic Fright...",
+                Desc = "Might come back.",
+                Reason = "Encounter Multimonster.",
+                Image = "rbxassetid://138951931923988"
+            })
         end)
     end)
 end)
