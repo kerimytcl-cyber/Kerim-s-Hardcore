@@ -1,0 +1,91 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+ 
+local player = Players.LocalPlayer
+ 
+local faces = {
+"rbxassetid://12145554242",
+"rbxassetid://12145599498",
+"rbxassetid://12155335619",
+"rbxassetid://12145534911",
+"rbxassetid://12145598814",
+"rbxassetid://11378285585",
+"rbxassetid://12145599275",
+"rbxassetid://12146135062"
+}
+ 
+local jump_sound = "rbxassetid://97122574985171"
+ 
+local gui = Instance.new("ScreenGui")
+gui.Name = "MultimonsterJumpscare"
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+ 
+local image = Instance.new("ImageLabel")
+image.Name = "MmFace"
+image.AnchorPoint = Vector2.new(0.5, 0.5)
+image.Position = UDim2.fromScale(0.5, 0.5)
+image.Size = UDim2.fromOffset(350, 350)
+image.BackgroundTransparency = 1
+image.ImageColor3 = Color3.fromRGB(255, 0, 0)
+image.ScaleType = Enum.ScaleType.Fit
+image.Visible = false
+image.Parent = gui
+ 
+local sound = Instance.new("Sound")
+sound.Name = "thescreamingmmsound"
+sound.SoundId = SOUND_ID
+sound.Volume = 2 -- sry headphone users
+sound.Parent = SoundService
+sound.TimePosition = 0.5
+ 
+local availableFaces = table.clone(faces)
+ 
+local function getRandomFace()
+    local index = math.random(1, #availableFaces)
+    local selectedFace = availableFaces[index]
+    
+    table.remove(availableFaces, index)
+    
+    return selectedFace
+end
+ 
+task.wait(1)
+ 
+sound:Play()
+ 
+image.Image = getRandomFace()
+image.Visible = true
+ 
+for i = 1, 5 do
+    task.wait(0.05)
+    image.Image = getRandomFace()
+end
+ 
+image.Image = getRandomFace()
+ 
+
+ 
+local tween = TweenService:Create(
+image,
+TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+{
+Size = UDim2.fromOffset(1400, 1400)
+}
+)
+ 
+tween:Play()
+task.wait(0.35)
+ 
+local fadeTween = TweenService:Create(
+image,
+TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+{
+ImageTransparency = 1
+}
+)
+ 
+fadeTween:Play()
