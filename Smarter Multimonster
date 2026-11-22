@@ -5,6 +5,7 @@ local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 
 local Player = Players.LocalPlayer
 local TargetAttribute = "MultimonsterTargetNodePosition"
@@ -98,7 +99,6 @@ end
 local Model = Entity.Model
 local Active = false
 local LungeActive = false
-local LungeCooldown = false
 local LungeToken = 0
 local LastCheck = 0
 local MoveConnection
@@ -109,6 +109,21 @@ local LungeConnection
 local FlashEffect
 local FlashToken = 0
 local TouchDeathTriggered = false
+local JumpscareTriggered = false
+local TouchLockConnection
+
+local JumpscareFaces = {
+    "rbxassetid://12145554242",
+    "rbxassetid://12145599498",
+    "rbxassetid://12155335619",
+    "rbxassetid://12145534911",
+    "rbxassetid://12145598814",
+    "rbxassetid://11378285585",
+    "rbxassetid://12145599275",
+    "rbxassetid://12146135062"
+}
+
+local JumpscareSoundID = "rbxassetid://97122574985171"
 
 local function getCharacter()
     return Player.Character
@@ -171,6 +186,7 @@ local function canTouchKill()
         and not isHoldingCrucifix()
         and not isBeingCrucified()
         and not TouchDeathTriggered
+        and not JumpscareTriggered
 end
 
 local function getAllNodes()
@@ -350,7 +366,7 @@ local function stopLunge(restoreStart, startCFrame)
 end
 
 local function startLunge()
-    if LungeActive or LungeCooldown or not isAlive() or isHiding() then
+    if LungeActive or not isAlive() or isHiding() then
         return
     end
 
@@ -365,12 +381,14 @@ local function startLunge()
     end
 
     LungeActive = true
-    LungeCooldown = true
     LungeToken += 1
 
     local MyToken = LungeToken
     local StartCFrame = Model:GetPivot()
-    local TargetCFrame = Root.CFrame
+    local TotalDuration = 1
+    local StartTime = os.clock()
+    local EndTime = StartTime + TotalDuration
+    local RetargetDistance = 0.5
 
     LungeValue = Instance.new("CFrameValue")
     LungeValue.Value = StartCFrame
@@ -390,47 +408,118 @@ local function startLunge()
         Model:PivotTo(LungeValue.Value)
     end)
 
-    local Inbound = TweenService:Create(
-        LungeValue,
-        TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-        {Value = TargetCFrame}
-    )
-
-    table.insert(ActiveTweens, Inbound)
-    Inbound:Play()
-
-    task.spawn(function()
-        local State = Inbound.Completed:Wait()
-
-        if MyToken ~= LungeToken then
-            return
+    local function playSegment(TargetCFrame, Duration, WatchedTarget)
+        if Duration <= 0 then
+            return "Completed"
         end
 
-        if State ~= Enum.PlaybackState.Completed
-            or not isAlive()
-            or isHiding()
-            or isBeingCrucified() then
-            stopLunge(true, StartCFrame)
-            return
-        end
-
-        local Outbound = TweenService:Create(
+        local Tween = TweenService:Create(
             LungeValue,
-            TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Value = StartCFrame}
+            TweenInfo.new(
+                Duration,
+                Enum.EasingStyle.Quad,
+                Enum.EasingDirection.In
+            ),
+            {
+                Value = TargetCFrame
+            }
         )
 
-        table.insert(ActiveTweens, Outbound)
-        Outbound:Play()
-        Outbound.Completed:Wait()
+        table.insert(ActiveTweens, Tween)
+        Tween:Play()
+
+        while true do
+            if MyToken ~= LungeToken then
+                return "Cancelled"
+            end
+
+            if not isAlive() or isHiding() or isBeingCrucified() then
+                stopLunge(true, StartCFrame)
+                return "Cancelled"
+            end
+
+            local CurrentRoot = getRoot()
+
+            if not CurrentRoot then
+                stopLunge(true, StartCFrame)
+                return "Cancelled"
+            end
+
+            if (CurrentRoot.Position - WatchedTarget.Position).Magnitude >= RetargetDistance then
+                Tween:Cancel()
+                return "Retarget"
+            end
+
+            if Tween.PlaybackState == Enum.PlaybackState.Completed then
+                return "Completed"
+            end
+
+            if os.clock() >= EndTime then
+                Tween:Cancel()
+                return "Completed"
+            end
+
+            task.wait(0.02)
+        end
+    end
+
+    task.spawn(function()
+        while os.clock() < EndTime do
+            if MyToken ~= LungeToken then
+                return
+            end
+
+            local CurrentRoot = getRoot()
+
+            if not CurrentRoot then
+                stopLunge(true, StartCFrame)
+                return
+            end
+
+            local CurrentTarget = CurrentRoot.CFrame
+            local RemainingTime = EndTime - os.clock()
+
+            if RemainingTime <= 0 then
+                break
+            end
+
+            local InboundDuration = RemainingTime * (0.65 / 1.1)
+            local OutboundDuration = RemainingTime * (0.45 / 1.1)
+
+            local InboundResult = playSegment(
+                CurrentTarget,
+                InboundDuration,
+                CurrentTarget
+            )
+
+            if InboundResult == "Cancelled" then
+                return
+            end
+
+            if InboundResult == "Retarget" then
+                task.wait()
+            else
+                local OutboundResult = playSegment(
+                    StartCFrame,
+                    OutboundDuration,
+                    CurrentTarget
+                )
+
+                if OutboundResult == "Cancelled" then
+                    return
+                end
+
+                if OutboundResult == "Retarget" then
+                    task.wait()
+                else
+                    break
+                end
+            end
+        end
 
         if MyToken == LungeToken then
             stopLunge(false, StartCFrame)
         end
-    end)
-
-    task.delay(1.2, function()
-        LungeCooldown = false
     end)
 end
 
@@ -482,23 +571,7 @@ local function showTouchDeathHints()
     end)
 end
 
-local function killPlayer()
-    if not canTouchKill() then
-        return
-    end
-
-    local Humanoid = getHumanoid()
-
-    if not Humanoid then
-        return
-    end
-
-    if isBeingCrucified() then
-        return
-    end
-
-    TouchDeathTriggered = true
-
+local function setDeathCause()
     local GameStats = ReplicatedStorage:FindFirstChild("GameStats")
     local PlayerStats = GameStats and GameStats:FindFirstChild("Player_" .. Player.Name)
     local Total = PlayerStats and PlayerStats:FindFirstChild("Total")
@@ -507,9 +580,212 @@ local function killPlayer()
     if DeathCause and DeathCause:IsA("StringValue") then
         DeathCause.Value = Entity.Config.Death.Cause
     end
+end
 
-    Humanoid.Health = 0
-    showTouchDeathHints()
+local function disconnectTouches()
+    for _, Connection in ipairs(TouchConnections) do
+        Connection:Disconnect()
+    end
+
+    table.clear(TouchConnections)
+end
+
+local function cleanup()
+    Active = false
+
+    if MoveConnection then
+        MoveConnection:Disconnect()
+        MoveConnection = nil
+    end
+
+    if TouchLockConnection then
+        TouchLockConnection:Disconnect()
+        TouchLockConnection = nil
+    end
+
+    disconnectTouches()
+    stopLunge(false)
+
+    FlashToken += 1
+
+    if FlashEffect then
+        FlashEffect:Destroy()
+        FlashEffect = nil
+    end
+end
+
+local function forceDespawn()
+    Active = false
+
+    if TouchLockConnection then
+        TouchLockConnection:Disconnect()
+        TouchLockConnection = nil
+    end
+
+    if MoveConnection then
+        MoveConnection:Disconnect()
+        MoveConnection = nil
+    end
+
+    disconnectTouches()
+    stopLunge(false)
+
+    if Model and Model.Parent then
+        Model:Destroy()
+    end
+
+    pcall(function()
+        Entity:Despawn()
+    end)
+end
+
+local function playTouchJumpscare()
+    if JumpscareTriggered or not canTouchKill() then
+        return
+    end
+
+    JumpscareTriggered = true
+    TouchDeathTriggered = true
+    Active = false
+
+    if MoveConnection then
+        MoveConnection:Disconnect()
+        MoveConnection = nil
+    end
+
+    disconnectTouches()
+
+    if LungeActive then
+        stopLunge(false)
+    end
+
+    local PlayerGui = Player:FindFirstChildOfClass("PlayerGui")
+
+    if not PlayerGui then
+        forceDespawn()
+        return
+    end
+
+    local Gui = Instance.new("ScreenGui")
+    Gui.Name = "A60Jumpscare"
+    Gui.IgnoreGuiInset = true
+    Gui.DisplayOrder = 999
+    Gui.ResetOnSpawn = false
+    Gui.Parent = PlayerGui
+
+    local Image = Instance.new("ImageLabel")
+    Image.Name = "A60Face"
+    Image.AnchorPoint = Vector2.new(0.5, 0.5)
+    Image.Position = UDim2.fromScale(0.5, 0.5)
+    Image.Size = UDim2.fromOffset(350, 350)
+    Image.BackgroundTransparency = 1
+    Image.ImageColor3 = Color3.fromRGB(255, 0, 0)
+    Image.ScaleType = Enum.ScaleType.Fit
+    Image.Visible = false
+    Image.Parent = Gui
+
+    local Sound = Instance.new("Sound")
+    Sound.Name = "A60JumpscareSound"
+    Sound.SoundId = JumpscareSoundID
+    Sound.Volume = 1
+    Sound.Parent = SoundService
+    Sound.TimePosition = 0.5
+
+    local AvailableFaces = table.clone(JumpscareFaces)
+
+    local function getRandomFace()
+        if #AvailableFaces == 0 then
+            AvailableFaces = table.clone(JumpscareFaces)
+        end
+
+        local Index = math.random(1, #AvailableFaces)
+        local SelectedFace = AvailableFaces[Index]
+
+        table.remove(AvailableFaces, Index)
+
+        return SelectedFace
+    end
+
+    local LockRoot = getRoot()
+
+    if LockRoot and Model and Model.Parent then
+        local LockedCFrame = LockRoot.CFrame
+
+        TouchLockConnection = RunService.Heartbeat:Connect(function()
+            if not Model or not Model.Parent then
+                return
+            end
+
+            local CurrentRoot = getRoot()
+
+            if CurrentRoot then
+                Model:PivotTo(CurrentRoot.CFrame)
+            else
+                Model:PivotTo(LockedCFrame)
+            end
+        end)
+    end
+
+    task.spawn(function()
+        task.wait(0.5)
+
+        forceDespawn()
+
+        Sound:Play()
+
+        Image.Image = getRandomFace()
+        Image.Visible = true
+
+        for _ = 1, 5 do
+            task.wait(0.05)
+            Image.Image = getRandomFace()
+        end
+
+        Image.Image = getRandomFace()
+
+        local SizeTween = TweenService:Create(
+            Image,
+            TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+            {
+                Size = UDim2.fromOffset(1400, 1400)
+            }
+        )
+
+        SizeTween:Play()
+
+        setDeathCause()
+
+        local Humanoid = getHumanoid()
+
+        if Humanoid and Humanoid.Health > 0 then
+            Humanoid.Health = 0
+        end
+
+        showTouchDeathHints()
+
+        task.wait(0.4)
+
+        local FadeTween = TweenService:Create(
+            Image,
+            TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+            {
+                ImageTransparency = 1
+            }
+        )
+
+        FadeTween:Play()
+        FadeTween.Completed:Wait()
+
+        task.wait(5)
+
+        if Gui.Parent then
+            Gui:Destroy()
+        end
+
+        if Sound.Parent then
+            Sound:Destroy()
+        end
+    end)
 end
 
 local function checkTouch()
@@ -519,7 +795,7 @@ local function checkTouch()
 
     local Character = getCharacter()
 
-    if not Character then
+    if not Character or not Model or not Model.Parent then
         return
     end
 
@@ -530,7 +806,7 @@ local function checkTouch()
 
     for _, Part in ipairs(Workspace:GetPartBoundsInBox(BoxCFrame, BoxSize, Params)) do
         if Part:IsDescendantOf(Character) then
-            killPlayer()
+            playTouchJumpscare()
             return
         end
     end
@@ -550,14 +826,6 @@ local function checkLunge()
     end
 end
 
-local function disconnectTouches()
-    for _, Connection in ipairs(TouchConnections) do
-        Connection:Disconnect()
-    end
-
-    table.clear(TouchConnections)
-end
-
 local function connectTouchPart(Part)
     if not Part:IsA("BasePart") then
         return
@@ -571,33 +839,15 @@ local function connectTouchPart(Part)
         local Character = getCharacter()
 
         if Character and Hit:IsDescendantOf(Character) then
-            killPlayer()
+            playTouchJumpscare()
         end
     end))
-end
-
-local function cleanup()
-    Active = false
-
-    if MoveConnection then
-        MoveConnection:Disconnect()
-        MoveConnection = nil
-    end
-
-    disconnectTouches()
-    stopLunge(false)
-
-    FlashToken += 1
-
-    if FlashEffect then
-        FlashEffect:Destroy()
-        FlashEffect = nil
-    end
 end
 
 Entity:SetCallback("OnSpawned", function()
     Model = Entity.Model
     TouchDeathTriggered = false
+    JumpscareTriggered = false
 
     if not Model or not Model:IsA("Model") then
         warn("Multimonster: spawned model is unavailable.")
@@ -681,3 +931,4 @@ Entity:SetCallback("OnDespawned", function()
 end)
 
 Entity:Run()
+
