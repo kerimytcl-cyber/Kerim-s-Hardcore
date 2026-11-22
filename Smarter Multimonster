@@ -35,7 +35,7 @@ local Entity = Spawner:Create({
 
     Movement = {
         Speed = 310,
-        Delay = 0,
+        Delay = 3,
         Reversed = false
     },
 
@@ -43,7 +43,7 @@ local Entity = Spawner:Create({
         Enabled = true,
         Type = "Ambush",
         Min = 3,
-        Max = 5,
+        Max = 4,
         Delay = 2
     },
 
@@ -84,9 +84,9 @@ local Entity = Spawner:Create({
     Death = {
         Type = "Guiding",
         Hints = {
-            "You died to The Multimonster",
-            "You can tell it's presence by a red flash",
-            "When it's attacking, hide and do not use safespots as it checks them"
+            "You died to The Multimonster.",
+            "You can tell it's presence by a red flash.",
+            "When it's attacking, hide and do not use safespots as it checks them."
         },
         Cause = "Multimonster"
     }
@@ -112,6 +112,9 @@ local TouchDeathTriggered = false
 local JumpscareTriggered = false
 local TouchLockConnection
 
+local FaceCycleActive = false
+local FaceCycleToken = 0
+
 local JumpscareFaces = {
     "rbxassetid://12145554242",
     "rbxassetid://12145599498",
@@ -124,6 +127,44 @@ local JumpscareFaces = {
 }
 
 local JumpscareSoundID = "rbxassetid://97122574985171"
+
+local function startFaceCycle()
+    FaceCycleToken += 1
+    local MyToken = FaceCycleToken
+
+    FaceCycleActive = true
+
+    task.spawn(function()
+        local FaceIndex = 1
+
+        while FaceCycleActive and MyToken == FaceCycleToken do
+            if not Model or not Model.Parent then
+                break
+            end
+
+            local RushNew = Model:FindFirstChild("RushNew")
+            local Main = RushNew and RushNew:FindFirstChild("Main")
+            local Face = Main and Main:FindFirstChild("Face")
+
+            if Face then
+                Face.Texture = JumpscareFaces[FaceIndex]
+
+                FaceIndex += 1
+
+                if FaceIndex > #JumpscareFaces then
+                    FaceIndex = 1
+                end
+            end
+
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function stopFaceCycle()
+    FaceCycleActive = false
+    FaceCycleToken += 1
+end
 
 local function getCharacter()
     return Player.Character
@@ -592,6 +633,7 @@ end
 
 local function cleanup()
     Active = false
+    stopFaceCycle()
 
     if MoveConnection then
         MoveConnection:Disconnect()
@@ -616,6 +658,7 @@ end
 
 local function forceDespawn()
     Active = false
+    stopFaceCycle()
 
     if TouchLockConnection then
         TouchLockConnection:Disconnect()
@@ -857,6 +900,8 @@ Entity:SetCallback("OnSpawned", function()
     Active = true
     LastCheck = 0
 
+    startFaceCycle()
+
     for _, Instance in ipairs(Model:GetDescendants()) do
         connectTouchPart(Instance)
     end
@@ -931,4 +976,3 @@ Entity:SetCallback("OnDespawned", function()
 end)
 
 Entity:Run()
-
