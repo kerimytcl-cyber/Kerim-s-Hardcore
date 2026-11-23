@@ -48,7 +48,12 @@ function LoadCustomInstance(assetId, parent)
     local model
     local attempts = 0
 
-    while wait() and not model and attempts < maxLoadRetries do
+    while not model do
+        if attempts >= maxLoadRetries then
+            warn("❌ [LoadCustomInstance]: Maximum retry limit reached for model ID " .. tostring(assetId) .. ". Stopping attempts.")
+            return nil
+        end
+
         attempts = attempts + 1
 
         print("🔄 Trying to load model with Asset ID: " .. assetId .. " (Attempt " .. attempts .. "/" .. maxLoadRetries .. ")")
@@ -72,25 +77,27 @@ function LoadCustomInstance(assetId, parent)
             end)
 
             print("✅ [LoadCustomInstance]: Model " .. model.Name .. " successfully loaded into " .. model.Parent:GetFullName())
-        else
-            print("❌ [LoadCustomInstance]: Failed to load model ID " .. tostring(assetId) .. ". Retrying... 🔄")
-            wait(0.5)
+
+            return model
         end
+
+        if attempts >= maxLoadRetries then
+            warn("❌ [LoadCustomInstance]: Failed to load model ID " .. tostring(assetId) .. " after " .. maxLoadRetries .. " attempts. Giving up.")
+            return nil
+        end
+
+        print("❌ [LoadCustomInstance]: Failed to load model ID " .. tostring(assetId) .. ". Retrying... 🔄")
+        wait(0.5)
     end
 
-    if not model then
-        warn("❌ [LoadCustomInstance]: Failed to load model ID " .. tostring(assetId) .. " after " .. maxLoadRetries .. " attempts.")
-        return nil
-    end
-
-    return model
+    return nil
 end
 
 function Move(reverseDirection)
     local s = LoadCustomInstance("12254145022", workspace)
 
     if not s then
-        warn("[Rebound] Model failed to load. Aborting Move.")
+        warn("[Rebound] Model failed to load after maximum retries. This Rebound spawn has been stopped.")
         return
     end
 
@@ -361,7 +368,7 @@ function Move(reverseDirection)
                 local room = gruh[tostring(i)]
 
                 if room:FindFirstChild("RoomEntrance") then
-                    local a = room.RoomEntrance
+                    local a = room.RoomExit
 
                     local tween = game.TweenService:Create(
                         entity,
@@ -412,7 +419,7 @@ function Rebound()
         maxRebounds = maxRebounds - 1
     end
 
-    wait(8)
+    wait(15.3)
     Warn:Destroy()
 end
 
